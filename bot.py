@@ -49,15 +49,24 @@ def split_file(file_path, chunk_size=50 * 1024 * 1024):  # 50 MB chunks
             chunk_number += 1
     return chunks
 
+# Function to extract files (run in a separate thread)
+def extract_files(file_name, extract_folder):
+    patoolib.extract_archive(file_name, outdir=extract_folder)
+
 # Handle ZIP/RAR files
 async def handle_file(update: Update, context: CallbackContext):
     global is_extracting
     user = update.message.from_user
     file = await update.message.document.get_file()
 
-    # Download the file
+    # File details
     file_name = update.message.document.file_name
     file_size = update.message.document.file_size / (1024 * 1024 * 1024)  # Size in GB
+
+    # Notify user about file size
+    await update.message.reply_text(f"📄 File received: {file_name} ({file_size:.2f} GB)")
+
+    # Download the file
     start_time = time.time()
     await file.download_to_drive(file_name)
     download_time = time.time() - start_time
@@ -86,8 +95,8 @@ async def handle_file(update: Update, context: CallbackContext):
             "🛑 Use /cancel to stop the extraction."
         )
 
-        # Extract the file
-        patoolib.extract_archive(file_name, outdir=EXTRACT_FOLDER)
+        # Extract the file in a separate thread (to avoid blocking)
+        await asyncio.to_thread(extract_files, file_name, EXTRACT_FOLDER)
         extraction_time = time.time() - start_time
 
         # Check if extraction was cancelled
