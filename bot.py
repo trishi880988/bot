@@ -66,8 +66,9 @@ async def handle_file(update: Update, context: CallbackContext):
     download_speed = (file_size * 1024) / download_time  # Speed in MB/s
     await update.message.reply_text(f"📥 Downloaded {file_name} ({file_size:.2f} GB) at {download_speed:.2f} MB/s.")
 
-    # Check if the file is a ZIP or RAR
-    if not (file_name.endswith(".zip") or file_name.endswith(".rar")):
+    # Check if the file is a ZIP or RAR (case-insensitive and allows numbers)
+    allowed_extensions = [".zip", ".rar"]
+    if not any(file_name.lower().endswith(ext) for ext in allowed_extensions):
         await update.message.reply_text("❌ Please send a valid ZIP or RAR file.")
         os.remove(file_name)
         return
