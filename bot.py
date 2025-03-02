@@ -20,7 +20,8 @@ is_extracting = False
 # Command: /start
 async def start(update: Update, context: CallbackContext):
     await update.message.reply_text(
-        "👋 Hello! Send me a ZIP or RAR file, and I will extract it for you."
+        "👋 Hello! Send me a ZIP or RAR file, and I will extract it for you.\n"
+        "📦 I can handle large files (GBs) and send them in chunks."
     )
 
 # Command: /cancel
@@ -32,6 +33,22 @@ async def cancel(update: Update, context: CallbackContext):
     else:
         await update.message.reply_text("❌ No extraction process is currently running.")
 
+# Function to split large files into chunks
+def split_file(file_path, chunk_size=50 * 1024 * 1024):  # 50 MB chunks
+    chunk_number = 1
+    chunks = []
+    with open(file_path, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            chunk_name = f"{file_path}.part{chunk_number}"
+            with open(chunk_name, "wb") as chunk_file:
+                chunk_file.write(chunk)
+            chunks.append(chunk_name)
+            chunk_number += 1
+    return chunks
+
 # Handle ZIP/RAR files
 async def handle_file(update: Update, context: CallbackContext):
     global is_extracting
@@ -40,7 +57,14 @@ async def handle_file(update: Update, context: CallbackContext):
 
     # Download the file
     file_name = update.message.document.file_name
+    file_size = update.message.document.file_size / (1024 * 1024 * 1024)  # Size in GB
+    start_time = time.time()
     await file.download_to_drive(file_name)
+    download_time = time.time() - start_time
+
+    # Calculate download speed
+    download_speed = (file_size * 1024) / download_time  # Speed in MB/s
+    await update.message.reply_text(f"📥 Downloaded {file_name} ({file_size:.2f} GB) at {download_speed:.2f} MB/s.")
 
     # Check if the file is a ZIP or RAR
     if not (file_name.endswith(".zip") or file_name.endswith(".rar")):
@@ -84,8 +108,17 @@ async def handle_file(update: Update, context: CallbackContext):
             await update.message.reply_text("❌ No files found in the archive.")
         else:
             for file_path in extracted_files:
-                with open(file_path, "rb") as f:
-                    await update.message.reply_document(document=f)
+                file_size = os.path.getsize(file_path) / (1024 * 1024 * 1024)  # Size in GB
+                if file_size > 2:  # If file is larger than 2 GB, split it into chunks
+                    await update.message.reply_text(f"📦 Splitting large file: {os.path.basename(file_path)} ({file_size:.2f} GB)")
+                    chunks = split_file(file_path)
+                    for chunk in chunks:
+                        with open(chunk, "rb") as f:
+                            await update.message.reply_document(document=f)
+                        os.remove(chunk)
+                else:
+                    with open(file_path, "rb") as f:
+                        await update.message.reply_document(document=f)
 
     except patoolib.util.PatoolError as e:
         logger.error(f"Error extracting file: {e}")
