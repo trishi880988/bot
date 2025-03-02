@@ -1,14 +1,15 @@
 import os
 import logging
 import shutil
-import time
 import asyncio
-import libarchive.public
+import patoolib
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackContext
 
 # Enable logging
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 # Define extraction folder
@@ -30,29 +31,27 @@ async def cancel(update: Update, context: CallbackContext):
     else:
         await update.message.reply_text("❌ No extraction is currently running.")
 
-# Function to extract files using libarchive
-async def extract_files(file_path, output_folder):
+# Function to extract files using patoolib
+async def extract_files(file_path, output_folder, update: Update):
     global is_extracting
     is_extracting = True
     os.makedirs(output_folder, exist_ok=True)
     
     try:
-        with libarchive.public.file_reader(file_path) as archive:
-            for entry in archive:
-                if not is_extracting:
-                    return  # Cancel if the user requests
-                
-                entry_path = os.path.join(output_folder, entry.pathname)
-                os.makedirs(os.path.dirname(entry_path), exist_ok=True)
-                with open(entry_path, 'wb') as f:
-                    for block in entry.get_blocks():
-                        f.write(block)
-    except Exception as e:
+        # Extract the archive
+        patoolib.extract_archive(file_path, outdir=output_folder)
+        await update.message.reply_text("✅ Extraction successful!")
+        return True
+    except patoolib.util.PatoolError as e:
         logger.error(f"Error extracting file: {e}")
+        await update.message.reply_text(f"❌ Failed to extract the archive. Error: {e}")
         return False
-    
-    is_extracting = False
-    return True
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        await update.message.reply_text(f"❌ An unexpected error occurred: {e}")
+        return False
+    finally:
+        is_extracting = False
 
 # Function to split large files into chunks (50MB each)
 def split_file(file_path, chunk_size=50 * 1024 * 1024):
@@ -80,13 +79,14 @@ async def handle_file(update: Update, context: CallbackContext):
     await update.message.reply_text("⏳ Extracting your file... Please wait.")
     
     # Extract the file asynchronously
-    success = await extract_files(file_name, EXTRACT_FOLDER)
+    success = await extract_files(file_name, EXTRACT_FOLDER, update)
     
     if not success:
-        await update.message.reply_text("❌ Failed to extract the archive. It might be corrupted.")
         os.remove(file_name)
+        shutil.rmtree(EXTRACT_FOLDER, ignore_errors=True)
         return
     
+    # Send extracted files back to the user
     extracted_files = []
     for root, dirs, files in os.walk(EXTRACT_FOLDER):
         for name in files:
@@ -97,7 +97,7 @@ async def handle_file(update: Update, context: CallbackContext):
     else:
         for file_path in extracted_files:
             file_size = os.path.getsize(file_path) / (1024 * 1024 * 1024)
-            if file_size > 2:
+            if file_size > 2:  # If file is larger than 2GB, split it
                 await update.message.reply_text(f"📦 Splitting large file: {os.path.basename(file_path)} ({file_size:.2f} GB)")
                 chunks = split_file(file_path)
                 for chunk in chunks:
@@ -108,6 +108,7 @@ async def handle_file(update: Update, context: CallbackContext):
                 with open(file_path, "rb") as f:
                     await update.message.reply_document(document=f)
     
+    # Clean up
     os.remove(file_name)
     shutil.rmtree(EXTRACT_FOLDER, ignore_errors=True)
 
